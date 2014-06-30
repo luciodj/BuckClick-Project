@@ -2,10 +2,11 @@
  * Project: Buck-Click
  * File:    main.c
  * Author:  Lucio Di Jasio
- * Compiled using: XC8 v. 1.30
- * Created on Dec 10, 2013
+ * Compiled using: XC8 v. 1.32
+ *
+ * Updated to support Buck-Click board v1.01
+ *
  */
-
 
 //*****************************************************************************
 // Include and Header files
@@ -13,11 +14,9 @@
 #include <xc.h>
 #include "main.h"
 
-
 //*****************************************************************************
 // PIC Configuration
 //*****************************************************************************
-
 __CONFIG(FOSC_INTOSC & WDTE_OFF & PWRTE_OFF & MCLRE_ON & CP_OFF & CPD_OFF &
                BOREN_OFF & CLKOUTEN_ON & IESO_OFF & FCMEN_OFF);
 
@@ -33,7 +32,8 @@ __CONFIG(WRT_OFF & PLLEN_OFF & STVREN_ON & BORV_LO & LPBOR_OFF & LVP_OFF);
 #define S_WRITE     2       // writing data to device
 
 #define P_INT   LATB0       // MikroBus INT signal
-
+#define P_LED   LATA7       // Green LED
+#define P_PWM   LATC2       // PWM pin controlling slope compensation
 
 /*****************************************************************************
  * INTERRUPT Service Routine
@@ -157,21 +157,19 @@ void initIO(void)
 
   //Port initialization
   LATA      = 0b00000000;   // (all active low).
-  LATB      = 0b00000000;
+  LATB      = 0b00000000;   //
   LATC      = 0b00000000;   //
 
-  TRISA     = 0b00100111;   // A3 A4 A6 A7 NC ( output low)
-  TRISB     = 0b00000010;   // B0 out B1 in digital; B2 B4 B5 B6 B7 NC (output low)
-  TRISC     = 0b11111100;   // PSMC A, B, PWM outputs; SDA, SCL, SDI, TX, RX input
+  TRISA     = 0b00100100;   // A2 ana, A7-LED, A5 in, A0 A1 A3 A4 A6 are NC (output low to reduce power/noise)
+  TRISB     = 0b00011110;   // B0-INT out, B1 B2 B3 B4 analog, B5 B6 B7 are NC (output low)
+  TRISC     = 0b10111100;   // C[0,1] PSMC[A,B] outputs, C2 input ; C3-SCL, C4-SDA, C5-SDI, C7-RX input, C6-TX out
 
+  ANSELA    = 0b00000100;   // A2 analog inputs
+  ANSELB    = 0b00011110;   // B1 B2 B3 B4 analog inputs
 
-  ANSELA    = 0b00100111;   // A0, A1, A2, A5 analog inputs
-  ANSELB    = 0b00000010;   // B1 Analog input for POT, rest is all digital
-
-
-  WPUA      = 0b00000000;   // No pullups
-  WPUB      = 0b00000000;   // No pullups
-  WPUC      = 0b11100000;   // TX, RX, SDI pull up
+  WPUA      = 0b00100000;   // Pullup A5-CS
+  WPUB      = 0b00000001;   // Pullup B0-INT
+  WPUC      = 0b10100000;   // Pullup C5-SDI, C7-RX
 
 } // initIO
 
@@ -202,29 +200,33 @@ void initModules(void)
   INTF = 0;
   INTE = 0;			//NO INT/RB0 pin interrupts
 
+  // OpAmp Initialization (v 1.01 uses OPA2)
+  OPA2CON = 0b11000010;         // OPA2 Enabled, High Gain, OPA2IN+ <= DAC
+  OPA1CON = 0b00000000;         // OPA1 OFF, not needed in this example
 
-  // Opamp1 Initialization
-  OPA1CON = 0b11000010;         // Opamp Enabled, High Gain, OPA1IN+ <= DAC
+  // Comparator Initialization (v 1.01 uses C3)
+  CM3CON0 = 0b10001110;         // Enabled, Pol Normal, Hyst, Async,
+  //  CM3CON1 = 0b00001011;
+  CM3CON1bits.C3PCH =   1;      // Positive IN1+(RB4, IFB),
+  CM3CON1bits.C3NCH =   3;      // Negative IN3-(RB1, OPA2OUT)
 
-  //Opamp2 initialization
-  OPA2CON = 0b00000000;         // OPA2 OFF, not needed in this lab
-
-  //Comparator Initialization
-  CM1CON0 = 0b10001110;         // Enabled, Pol Normal, Hyst, Async,
-  CM1CON1 = 0b00000001;         // Positive IN0+(RA2, IFA), negative IN0-(RA0, OPAOUT)
-
-  //FVR initialization
+  // FVR initialization
   FVRCON  = 0b10001000;  	// FVR enabled, DAC VR=2.048V
 
-  //DAC Initialization
-  DACCON0 = 0b10001000;         // DAC enabled, DACout1/2 off, Source: FVR and Vss
-  DACCON1 = 255;                // 256/Vdac * 1.5V
+  // DAC Initialization
+  DACCON0 = 0b10101000;         // DAC enabled, DACout1 on, Source: FVR and Vss
+  DACCON1 = 154;                // 256/Vdac * 1.5V
 
-  //ADC Initialization
-//  ADCON0 = 0b00101001;          // 10-bit, AN10=RB1(CS), ADON
-  ADCON0 = 0b00010001;          // AN4=RA5(OPAMPIN), ADON
+  // PWM Initialization
+//  PR2     = 255;                  // set perio
+//  T2CON   = 0b00000100;         // turn on T2
+//  CCPR1L  = 128;                  // set duty
+//  CCP1CON = 0b00001100;         // PWM mode
+
+  // ADC Initialization
+  ADCON0 = 0b00100001;          // AN8=RB2(OPA2IN-), ADON
   ADCON1 = 0b01110000;          // Vdd and Vss as references, FRC clock, left align
-  ADCON2 = 0b00001111;          // negative input set to ref-
+  ADCON2 = 0b00001111;          // negative input selected by ADNREF(above)
 
   // I2C Initialization
   SSPMSK = I2C_ADD_MASK;        // set the mask bits
@@ -258,12 +260,12 @@ void initPSMC(void)
   	PSMC1CLK = 0b00000001;	// Based on Fosc 64Mhz, so 20nS resolution
 
 // Output Pin Enables & Polarity
-	PSMC1OEN = 0b00000011;	// Enable Outputs A(H) and B(L) at startup
+	PSMC1OEN = 0b00000011;	// Enable Outputs A(H) and B(L) at startup, no slope compensation
   	PSMC1POL = 0b00000000;	// PSMC1A/B is active high.
 
-// Blanking  No blanking for this lab.
+// Blanking  Blanking of CxOUT (C3 is used in v1.01)
   	PSMC1BLNK = 0b00000001;	// Immediate Blanking of Rising Edge enabled
-  	PSMC1REBS = 0b00000010;	// Rising Edge Blanking of C1OUT
+  	PSMC1REBS = 0b00001000;	// Rising Edge Blanking of C3OUT
   	PSMC1FEBS = 0b00000000;	// Falling Edge Blanking disabled
 
 
@@ -272,9 +274,9 @@ void initPSMC(void)
 // RISING EDGE
   	PSMC1PHS = 0b00000001;	// Rising edge controlled by PSMC1PH Timer Match
 
-// FALLING EDGE - End of Sync. Time
+// FALLING EDGE - End of Sync. Time v1.01 uses C3
+	PSMC1DCS = 0b00001001;	// Falling edge controlled by Timer Match OR C3OUT
 //	PSMC1DCS = 0b00000001;	// Falling edge controlled by Timer Match
-        PSMC1DCS = 0b00000011;  // adding OR C1OUT
 
 // PERIOD CONTROL
  	PSMC1PRS = 0b00000001;	// Period event controlled by PSMC1PR Timer Match (Period)
@@ -289,8 +291,9 @@ void initPSMC(void)
 	PSMC1PH = 1;            // Rising Event timer value compared to the primary TMR  (Cycle Start Delay)
 
 // Set the Duty Cycle
-	PSMC1DC = 143;          // Falling Event timer value compared to the primary TMR (Duty Cycle)
-                                // maximum 90%
+	PSMC1DC = 128;          // Falling Event timer value compared to the primary TMR (Duty Cycle)
+                                // maximum 80%
+//	PSMC1DC = 50;          // Falling Event timer value compared to the primary TMR (Duty Cycle)
 
 // Set the period timer to force the restart of the period
 // If running at 64MHz every tic is 15.625ns We want a period of 400KHz
@@ -298,16 +301,16 @@ void initPSMC(void)
 	PSMC1PR = 159;          // Period Event timer value compared to the primary TMR  (Period)
 
 // Dead-band Rising
-	PSMC1DBR = 6;           // 100ns
+	PSMC1DBR = 3;           // 48ns
 
 //  Dead-band Falling
-	PSMC1DBF = 6;           // 100ns
+	PSMC1DBF = 3;           // 48ns
 
 // Fractional Frequency Adjust
 	PSMC1FFA  = 0b00000000;	// No FFA set
 
 // Add blanking of pin inputs increments of PSMC_CLK
-	PSMC1BLKR = 10;         // 160ns falling edge blanking
+	PSMC1BLKR = 32;         // 160ns rising edge blanking
 	PSMC1BLKF = 0;          // No blanking set
 
 // Output Steering
@@ -343,7 +346,8 @@ void main(void)
         if ( time++ >= 10000)           // buck click heart beat
         {
             time = 0;
-            P_INT = 1-P_INT;            // toggle the INT pin
+            P_INT = 1- P_INT;           // toggle the INT pin
+            P_LED = 1- P_LED;           // toggle the LED
         }
 
         // perform a conversion 
