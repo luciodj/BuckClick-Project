@@ -18,9 +18,9 @@
 // PIC Configuration
 //*****************************************************************************
 __CONFIG(FOSC_INTOSC & WDTE_OFF & PWRTE_OFF & MCLRE_ON & CP_OFF & CPD_OFF &
-               BOREN_OFF & CLKOUTEN_ON & IESO_OFF & FCMEN_OFF);
+               BOREN_ON & CLKOUTEN_OFF & IESO_OFF & FCMEN_ON);
 
-__CONFIG(WRT_OFF & PLLEN_OFF & STVREN_ON & BORV_LO & LPBOR_OFF & LVP_OFF);
+__CONFIG(WRT_OFF & PLLEN_OFF & STVREN_ON & BORV_HI & LPBOR_OFF & LVP_OFF);
 
 #define I2C_DEV_ADD  0x10    // top nibble only, unique I2C address
 #define I2C_ADD_MASK 0xF0    // only address bits
@@ -150,7 +150,7 @@ void interrupt isr(void)
 
 
 /************************************************************************
- * Initialize micro I/O
+ * Initialize I/Os
  ************************************************************************/
 void initIO(void)
 {
@@ -161,31 +161,24 @@ void initIO(void)
   LATC      = 0b00000000;   //
 
   TRISA     = 0b00100100;   // A2 ana, A7-LED, A5 in, A0 A1 A3 A4 A6 are NC (output low to reduce power/noise)
-  TRISB     = 0b00011110;   // B0-INT out, B1 B2 B3 B4 analog, B5 B6 B7 are NC (output low)
+  TRISB     = 0b00011111;   // B0-INT in, B1 B2 B3 B4 analog, B5 B6 B7 are NC (output low)
   TRISC     = 0b10111100;   // C[0,1] PSMC[A,B] outputs, C2 input ; C3-SCL, C4-SDA, C5-SDI, C7-RX input, C6-TX out
 
   ANSELA    = 0b00000100;   // A2 analog inputs
-  ANSELB    = 0b00011110;   // B1 B2 B3 B4 analog inputs
+  ANSELB    = 0b00011110;   // B0-INT dig in, B1 B2 B3 B4 analog inputs
 
   WPUA      = 0b00100000;   // Pullup A5-CS
-  WPUB      = 0b00000001;   // Pullup B0-INT
+  WPUB      = 0b00000000;   // none
   WPUC      = 0b10100000;   // Pullup C5-SDI, C7-RX
 
 } // initIO
 
 
 /************************************************************************
-*                                                                       *
-*      Function:       void initModules(void)                           *
-*                                                                       *
-*      Description:                                                     *
-*                                                                       *
-*      Parameters:      none                                            *
-*      Return value:    none                                            *
-*                                                                       *
-*      Note:                                                            *
-*           All peripherals are initialized, interrupts enabled         *
-*                                                                       *
+*      Function:       void initModules(void)                           
+*                                                                                                                                              *
+*      Note:                                                            
+*           All peripherals are initialized, interrupts enabled         
 ***********************************************************************/
 void initModules(void)
 {
@@ -217,14 +210,14 @@ void initModules(void)
   DACCON0 = 0b10101000;         // DAC enabled, DACout1 on, Source: FVR and Vss
   DACCON1 = 154;                // 256/Vdac * 1.5V
 
-  // PWM Initialization
+  // PWM Initialization // not used! Slope Compensation performed with PSMC
 //  PR2     = 255;                  // set perio
 //  T2CON   = 0b00000100;         // turn on T2
 //  CCPR1L  = 128;                  // set duty
 //  CCP1CON = 0b00001100;         // PWM mode
 
-  // ADC Initialization
-  ADCON0 = 0b00100001;          // AN8=RB2(OPA2IN-), ADON
+  // ADC Initialization, sensing Vout * R12/(R12+R15) ~Vout/3
+  ADCON0 = 0b00100001;          // AN8=RB2 (OPA2IN-), ADON
   ADCON1 = 0b01110000;          // Vdd and Vss as references, FRC clock, left align
   ADCON2 = 0b00001111;          // negative input selected by ADNREF(above)
 
@@ -259,7 +252,7 @@ void initPSMC(void)
 
   	PSMC1CLK = 0b00000001;	// Based on Fosc 64Mhz, so 20nS resolution
 
-// Output Pin Enables & Polarity
+// Output Pin Enables & Polarity // Slope compensation is controlled by RC2, PSMC1C or CCP1
 	PSMC1OEN = 0b00000011;	// Enable Outputs A(H) and B(L) at startup, no slope compensation
   	PSMC1POL = 0b00000000;	// PSMC1A/B is active high.
 
@@ -267,7 +260,6 @@ void initPSMC(void)
   	PSMC1BLNK = 0b00000001;	// Immediate Blanking of Rising Edge enabled
   	PSMC1REBS = 0b00001000;	// Rising Edge Blanking of C3OUT
   	PSMC1FEBS = 0b00000000;	// Falling Edge Blanking disabled
-
 
 // Output Edge Trigger Configuration (Period, Rising and Falling Edges)
 
@@ -285,7 +277,6 @@ void initPSMC(void)
   	PSMC1ASDC = 0b00000000;	// Auto-Shutdown control register
   	PSMC1ASDL = 0b00000000;	// In Auto-Shutdown, PSMC1A will go high, PSMC1B will go low
   	PSMC1ASDS = 0b00000000;	// Auto-Shutdown source register (none set)
-
 
 // Output Timer Triggers (these are based on PSMC1TMR based on above configuration)
 	PSMC1PH = 1;            // Rising Event timer value compared to the primary TMR  (Cycle Start Delay)
@@ -346,15 +337,11 @@ void main(void)
         if ( time++ >= 10000)           // buck click heart beat
         {
             time = 0;
-            P_INT = 1- P_INT;           // toggle the INT pin
             P_LED = 1- P_LED;           // toggle the LED
         }
 
         // perform a conversion 
         GO_nDONE =1;                    // Start reading of ADC
         while(GO_nDONE);
-
-    //DACCON1 = ((ADRESH>>2) + 7);       // Value of ADC placed into DAC
-                                        // for Comparator input
     }
 } // main

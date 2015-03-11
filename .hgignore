@@ -4,3 +4,5 @@ build
 dist
 private
 Microchip
+funclist
+l\.obj
